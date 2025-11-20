@@ -51,9 +51,9 @@ abstract class FileParser {
 class CsvParser extends FileParser {
     @Override
     public List<Address> parse(String filePath) {
-        List<Address> addresses = new ArrayList<>(1000);
+        List<Address> addresses = new ArrayList<>();
 
-        try (BufferedReader br = new BufferedReader(new FileReader(filePath), 8192 * 4)) {
+        try (BufferedReader br = new BufferedReader(new FileReader(filePath))) {
             String line;
             boolean isFirstLine = true;
 
@@ -63,7 +63,7 @@ class CsvParser extends FileParser {
                     continue;
                 }
 
-                String[] parts = fastSplit(line);
+                String[] parts = line.split("[,;]");
                 if (parts.length >= 4) {
                     try {
                         String city = parts[0].trim().replace("\"", "");
@@ -80,50 +80,23 @@ class CsvParser extends FileParser {
         } catch (FileNotFoundException e) {
             System.out.println("Файл не найден: " + filePath);
         } catch (IOException e) {
-            System.out.println("Ошибка чтения файла: " + e.getMessage());
+            System.out.println("Ошибка чтения файла.");
         }
 
         return addresses;
-    }
-
-    private String[] fastSplit(String line) {
-        List<String> parts = new ArrayList<>();
-        StringBuilder current = new StringBuilder();
-        boolean inQuotes = false;
-
-        for (int i = 0; i < line.length(); i++) {
-            char c = line.charAt(i);
-
-            if (c == '"') {
-                inQuotes = !inQuotes;
-            } else if ((c == ',' || c == ';') && !inQuotes) {
-                parts.add(current.toString());
-                current.setLength(0);
-            } else {
-                current.append(c);
-            }
-        }
-        parts.add(current.toString());
-
-        return parts.toArray(new String[0]);
     }
 }
 
 class XmlParser extends FileParser {
     @Override
     public List<Address> parse(String filePath) {
-        List<Address> addresses = new ArrayList<>(1000);
+        List<Address> addresses = new ArrayList<>();
 
         try {
             DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
-            factory.setValidating(false);
-            factory.setNamespaceAware(false);
-            factory.setFeature("http://xml.org/sax/features/validation", false);
-            factory.setFeature("http://apache.org/xml/features/nonvalidating/load-dtd-grammar", false);
-            factory.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
-
             DocumentBuilder builder = factory.newDocumentBuilder();
             Document document = builder.parse(new File(filePath));
+
             NodeList itemNodes = document.getElementsByTagName("item");
 
             for (int i = 0; i < itemNodes.getLength(); i++) {
@@ -147,9 +120,9 @@ class XmlParser extends FileParser {
         } catch (FileNotFoundException e) {
             System.out.println("Файл не найден: " + filePath);
         } catch (IOException e) {
-            System.out.println("Ошибка чтения XML файла: " + e.getMessage());
+            System.out.println("Ошибка чтения файла.");
         } catch (Exception e) {
-            System.out.println("Ошибка парсинга XML: " + e.getMessage());
+            System.out.println("Ошибка при разборе XML файла.");
         }
 
         return addresses;
@@ -157,12 +130,11 @@ class XmlParser extends FileParser {
 }
 
 class StatisticsCalculator {
-
     public Map<Address, Integer> findDuplicates(List<Address> addresses) {
-        Map<Address, Integer> addressCount = new HashMap<>(addresses.size());
+        Map<Address, Integer> addressCount = new HashMap<>();
 
         for (Address address : addresses) {
-            addressCount.merge(address, 1, Integer::sum);
+            addressCount.put(address, addressCount.getOrDefault(address, 0) + 1);
         }
 
         Map<Address, Integer> duplicates = new HashMap<>();
@@ -182,11 +154,13 @@ class StatisticsCalculator {
             String city = address.getCity();
             int floor = address.getFloor();
 
-            int[] floors = cityFloorStats.computeIfAbsent(city, k -> new int[5]);
+            int[] floors = cityFloorStats.getOrDefault(city, new int[5]);
 
             if (floor >= 1 && floor <= 5) {
                 floors[floor - 1]++;
             }
+
+            cityFloorStats.put(city, floors);
         }
 
         return cityFloorStats;
@@ -194,7 +168,6 @@ class StatisticsCalculator {
 }
 
 public class AddressAnalyzer {
-
     public static void main(String[] args) {
         Scanner scanner = new Scanner(System.in);
         StatisticsCalculator statsCalculator = new StatisticsCalculator();
@@ -227,18 +200,35 @@ public class AddressAnalyzer {
 
                 List<Address> addresses = parseFile(input);
 
-                if (addresses.isEmpty()) {
+                if (!addresses.isEmpty()) {
+                    Map<Address, Integer> duplicates = statsCalculator.findDuplicates(addresses);
+                    Map<String, int[]> floorStats = statsCalculator.calculateFloorStatistics(addresses);
+
+                    System.out.println("\n=== РЕЗУЛЬТАТЫ СТАТИСТИКИ ===");
+
+                    System.out.println("\n--- ДУБЛИРУЮЩИЕСЯ ЗАПИСИ ---");
+                    if (duplicates.isEmpty()) {
+                        System.out.println("Дубликаты не найдены");
+                    } else {
+                        for (Map.Entry<Address, Integer> entry : duplicates.entrySet()) {
+                            System.out.println(entry.getKey() + " - повторений: " + entry.getValue());
+                        }
+                    }
+
+                    System.out.println("\n--- СТАТИСТИКА ПО ЭТАЖАМ ---");
+                    for (Map.Entry<String, int[]> entry : floorStats.entrySet()) {
+                        String city = entry.getKey();
+                        int[] floors = entry.getValue();
+
+                        System.out.printf("%s: 1-этажных: %d, 2-этажных: %d, 3-этажных: %d, 4-этажных: %d, 5-этажных: %d%n",
+                                city, floors[0], floors[1], floors[2], floors[3], floors[4]);
+                    }
+                } else {
                     System.out.println("Файл не содержит данных или произошла ошибка при чтении");
-                    continue;
                 }
 
-                Map<Address, Integer> duplicates = statsCalculator.findDuplicates(addresses);
-                Map<String, int[]> floorStats = statsCalculator.calculateFloorStatistics(addresses);
-
                 long endTime = System.currentTimeMillis();
-                long processingTime = endTime - startTime;
-
-                printStatistics(duplicates, floorStats, processingTime);
+                System.out.println("\nВремя обработки: " + (endTime - startTime) + " мс");
 
             } catch (NoSuchElementException e) {
                 System.out.println("\nЗавершение работы...");
@@ -262,31 +252,5 @@ public class AddressAnalyzer {
         }
 
         return parser.parse(filePath);
-    }
-
-    private static void printStatistics(Map<Address, Integer> duplicates,
-                                        Map<String, int[]> floorStats,
-                                        long processingTime) {
-
-        System.out.println("\n=== РЕЗУЛЬТАТЫ СТАТИСТИКИ ===");
-        System.out.println("Время обработки: " + processingTime + " мс");
-
-        System.out.println("\n--- ДУБЛИРУЮЩИЕСЯ ЗАПИСИ ---");
-        if (duplicates.isEmpty()) {
-            System.out.println("Дубликаты не найдены");
-        } else {
-            for (Map.Entry<Address, Integer> entry : duplicates.entrySet()) {
-                System.out.println(entry.getKey() + " - повторений: " + entry.getValue());
-            }
-        }
-
-        System.out.println("\n--- СТАТИСТИКА ПО ЭТАЖАМ ---");
-        for (Map.Entry<String, int[]> entry : floorStats.entrySet()) {
-            String city = entry.getKey();
-            int[] floors = entry.getValue();
-
-            System.out.printf("%s: 1-этажных: %d, 2-этажных: %d, 3-этажных: %d, 4-этажных: %d, 5-этажных: %d%n",
-                    city, floors[0], floors[1], floors[2], floors[3], floors[4]);
-        }
     }
 }
