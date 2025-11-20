@@ -31,7 +31,7 @@ public class Main {
         }
     }
 
-    private static void performNewSearch(Scanner scanner) throws IOException {
+    private static void performNewSearch(Scanner scanner) {
         System.out.print("Введите поисковый запрос: ");
         String query = scanner.nextLine().trim();
 
@@ -43,7 +43,7 @@ public class Main {
         Query searchQuery = new Query(query);
         currentSearch = searchQuery.execute();
 
-        if (currentSearch.getResults().size() == 0) {
+        if (currentSearch == null || currentSearch.getResults().size() == 0) {
             System.out.println("Ничего не найдено. Попробуйте другой запрос.");
             currentSearch = null;
             return;
@@ -52,7 +52,7 @@ public class Main {
         currentSearch.display();
     }
 
-    private static void displayMainMenu(Scanner scanner) throws IOException {
+    private static void displayMainMenu(Scanner scanner) {
         System.out.println("\n=== Главное меню ===");
         System.out.println("1. Выбрать статью из текущего списка");
         System.out.println("2. Новый поиск");
@@ -78,7 +78,7 @@ public class Main {
         }
     }
 
-    private static void selectArticleFromCurrentList(Scanner scanner) throws IOException {
+    private static void selectArticleFromCurrentList(Scanner scanner) {
         if (currentSearch == null) return;
 
         System.out.println("\nСписок статей:");
@@ -91,7 +91,11 @@ public class Main {
             int choice = Integer.parseInt(input);
             if (choice >= 1 && choice <= currentSearch.getResults().size()) {
                 SearchItems article = currentSearch.getResults().get(choice - 1);
-                article.openInBrowser();
+                boolean opened = article.openInBrowser();
+
+                if (opened) {
+                    System.out.println("Статья открыта в браузере!");
+                }
 
                 System.out.println("\nНажмите Enter для возврата в меню...");
                 scanner.nextLine();
@@ -100,8 +104,6 @@ public class Main {
             }
         } catch (NumberFormatException e) {
             System.out.println("Пожалуйста, введите корректный номер.");
-        } catch (Exception e) {
-            System.out.println("Ошибка при открытии статьи: " + e.getMessage());
         }
     }
 }
@@ -113,39 +115,46 @@ class Query {
         this.queryText = queryText;
     }
 
-    public WikiSearchResult execute() throws IOException {
-        String encodedQuery = URLEncoder.encode(queryText, "UTF-8");
-        String apiUrl = "https://ru.wikipedia.org/w/api.php?" +
-                "action=query&list=search&srsearch=" + encodedQuery +
-                "&srlimit=10&utf8=&format=json";
+    public WikiSearchResult execute() {
+        try {
+            String encodedQuery = URLEncoder.encode(queryText, "UTF-8");
+            String apiUrl = "https://ru.wikipedia.org/w/api.php?" +
+                    "action=query&list=search&srsearch=" + encodedQuery +
+                    "&srlimit=10&utf8=&format=json";
 
-        URL url = new URL(apiUrl);
-        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-        conn.setRequestMethod("GET");
-        conn.setRequestProperty("User-Agent", "WikiSearchApp/1.0");
+            URL url = new URL(apiUrl);
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("GET");
+            conn.setRequestProperty("User-Agent", "WikiSearchApp/1.0");
 
-        BufferedReader in = new BufferedReader(new InputStreamReader(conn.getInputStream(), "UTF-8"));
-        StringBuilder response = new StringBuilder();
-        String line;
-        while ((line = in.readLine()) != null) {
-            response.append(line);
+            BufferedReader in = new BufferedReader(new InputStreamReader(conn.getInputStream(), "UTF-8"));
+            StringBuilder response = new StringBuilder();
+            String line;
+            while ((line = in.readLine()) != null) {
+                response.append(line);
+            }
+            in.close();
+            conn.disconnect();
+
+            String json = response.toString();
+            JsonObject jsonResponse = JsonParser.parseString(json).getAsJsonObject();
+            JsonObject queryObj = jsonResponse.getAsJsonObject("query");
+            JsonArray searchResults = queryObj.getAsJsonArray("search");
+
+            WikiSearchResult result = new WikiSearchResult(queryText);
+            for (int i = 0; i < searchResults.size(); i++) {
+                JsonObject article = searchResults.get(i).getAsJsonObject();
+                String title = article.get("title").getAsString();
+                int pageId = article.get("pageid").getAsInt();
+                result.addResult(new SearchItems(title, pageId));
+            }
+
+            return result;
+
+        } catch (Exception e) {
+            System.out.println("Ошибка при выполнении поиска: " + e.getMessage());
+            return new WikiSearchResult(queryText); // возвращаем пустой результат
         }
-        in.close();
-
-        String json = response.toString();
-        JsonObject jsonResponse = JsonParser.parseString(json).getAsJsonObject();
-        JsonObject queryObj = jsonResponse.getAsJsonObject("query");
-        JsonArray searchResults = queryObj.getAsJsonArray("search");
-
-        WikiSearchResult result = new WikiSearchResult(queryText);
-        for (int i = 0; i < searchResults.size(); i++) {
-            JsonObject article = searchResults.get(i).getAsJsonObject();
-            String title = article.get("title").getAsString();
-            int pageId = article.get("pageid").getAsInt();
-            result.addResult(new SearchItems(title, pageId));
-        }
-
-        return result;
     }
 }
 
@@ -187,15 +196,21 @@ class SearchItems {
         return title;
     }
 
-    public void openInBrowser() throws Exception {
-        String articleUrl = "https://ru.wikipedia.org/w/index.php?curid=" + pageId;
-        System.out.println("Открываю статью: " + title);
+    public boolean openInBrowser() {
+        try {
+            String articleUrl = "https://ru.wikipedia.org/w/index.php?curid=" + pageId;
+            System.out.println("Открываю статью: " + title);
 
-        if (Desktop.isDesktopSupported()) {
-            Desktop.getDesktop().browse(new URI(articleUrl));
-            System.out.println("Статья открыта в браузере!");
-        } else {
-            System.out.println("Открытие браузера не поддерживается.");
+            if (Desktop.isDesktopSupported()) {
+                Desktop.getDesktop().browse(new URI(articleUrl));
+                return true;
+            } else {
+                System.out.println("Открытие браузера не поддерживается.");
+                return false;
+            }
+        } catch (Exception e) {
+            System.out.println("Ошибка при открытии статьи: " + e.getMessage());
+            return false;
         }
     }
 }
